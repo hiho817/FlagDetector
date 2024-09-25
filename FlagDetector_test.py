@@ -5,7 +5,7 @@ import cv2 as cv
 # Main execution
 if __name__ == "__main__":
     # Paths to the reference and frame images
-    reference_path = r'red_flag_detector\reference.png'
+    reference_path = r'D:\doc\Team_unnamed\worksapce\red_flag_detector\reference.png'
 
     # Define custom HSV ranges (example for red and blue)
     custom_hsv_ranges = [
@@ -17,7 +17,7 @@ if __name__ == "__main__":
     safe_colume_width_ratio = 0.5
 
     # Initialize the detector
-    fd = FlagDetector(reference_path, custom_hsv_ranges, safe_colume_width_ratio = 0.5)
+    fd = FlagDetector(reference_path, custom_hsv_ranges, safe_column_width_ratio = 0.5)
     
     # Capture video from the webcam
     cap = cv.VideoCapture(0)
@@ -31,17 +31,17 @@ if __name__ == "__main__":
         if not ret:
             print("Failed to grab frame from webcam.")
             break
+        
+        fd.body_heading = 0
+        fd.flag_heading = 90
+
+        input_frame = frame.copy
         # Process the frame
-        processed_frame = fd.process_frame(frame)
+        frame = fd.process_frame(frame, "biggest")
         
         print(fd.is_flag)
-        print(fd.error)
-        print(fd.aiming)
-        print(fd.detected_num)
-        print(fd.is_within_safe_colume)
-        print(fd.pixels_per_meter)
 
-        cv.imshow('Detected Shapes', cv.resize(frame, (fd.display_width, fd.display_height)))
+        # cv.imshow('Detected Shapes', cv.resize(frame, (fd.display_width, fd.display_height)))
         if cv.waitKey(1) & 0xFF == ord('q'):
             break
     # Release the capture and close all OpenCV windows

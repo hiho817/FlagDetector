@@ -3,9 +3,14 @@ import numpy as np
 import sys
 import math
 import easyocr
+import logging
+
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class FlagDetector:
-    def __init__(self, reference_path, hsv_ranges=None, safe_colume_width_ratio = 0.5):
+    def __init__(self, reference_path, hsv_ranges=None, safe_column_width_ratio=0.5):
         """
         Initialize the detector with the reference image path.
         """
@@ -13,10 +18,12 @@ class FlagDetector:
         self.best_contour = None  # Initialize best_contour
         self.corners = None       # Initialize corners
         self.reader = easyocr.Reader(['en'], gpu=False)
-        self.display_width = None   # Will be set dynamically
-        self.display_height = None  # Will be set dynamically
+        self.display_width = 1280   # Will be set dynamically
+        self.display_height = 720  # Will be set dynamically
         self.point_LM = None
-        self.safe_column_width_ratio = safe_colume_width_ratio
+        self.safe_column_width_ratio = safe_column_width_ratio
+        self.body_heading = None
+        self.flag_heading = None
         # Define default HSV ranges for red if none are provided
         if hsv_ranges is None:
             self.hsv_ranges = [
@@ -26,13 +33,21 @@ class FlagDetector:
         else:
             self.hsv_ranges = hsv_ranges        
 
+    def draw_safe_column(self,frame):
+        # Draw the safe column on the frame
+        frame_center = (int(self.display_width / 2), int(self.display_height / 2))
+        radius_pixels = self.safe_column_width_ratio / 2 * self.display_height
+        radius_pixels_int = int(radius_pixels)
+        cv.circle(frame, frame_center, radius_pixels_int, (0, 255, 255), 2)  # Yellow circle
+        cv.circle(frame, frame_center, 5, (0, 255, 255), -1)  # Center point
+
     def get_reference_contour(self, reference_path):
         """
         Load the reference image and extract its contour.
         """
         reference = cv.imread(reference_path)
         if reference is None:
-            print("Error loading reference image.")
+            logging.error("Error loading reference image.")
             sys.exit()
 
         # Convert to grayscale and apply Gaussian blur
@@ -43,7 +58,7 @@ class FlagDetector:
 
         # Check if any contours are found
         if len(reference_contours) == 0:
-            print("No contours found in the reference image.")
+            logging.error("No contours found in the reference image.")
             sys.exit()
 
         # Select the largest contour based on area
@@ -59,6 +74,7 @@ class FlagDetector:
         # Extract regions based on HSV ranges
         frame_masked = self.get_masked_regions(frame)
 
+        # cv.imshow('frame_masked', cv.resize(frame_masked, (self.display_width, self.display_height)))
         # Apply morphological operations
         frame_morpho = self.morphological(frame_masked)
 
@@ -68,7 +84,7 @@ class FlagDetector:
 
         # Apply edge detection (Canny)
         edges = cv.Canny(blurred, 50, 150)
-
+        # cv.imshow('edges', cv.resize(edges, (self.display_width, self.display_height)))
         return edges
 
     def get_masked_regions(self, image):
@@ -125,6 +141,10 @@ class FlagDetector:
             v1 = p_prev - p_curr
             v2 = p_next - p_curr
 
+            # Handle zero-length vectors
+            if np.linalg.norm(v1) == 0 or np.linalg.norm(v2) == 0:
+                continue
+
             # Normalize the vectors
             v1_norm = v1 / np.linalg.norm(v1)
             v2_norm = v2 / np.linalg.norm(v2)
@@ -156,47 +176,24 @@ class FlagDetector:
         sorted_corners = corners_array[sorted_indices]
         return [tuple(point) for point in sorted_corners]
 
-    def find_best_contour(self, contours):
+    def calculate_moments_center(self, frame):
         """
-        Find the contour that best matches the reference contour.
+        Calculate and mark the center of the best contour on the frame.
         """
-        min_match_value = 1.0
-        best_contour = None
-        min_area = 500  # Minimum area threshold
-
-        for contour in contours:
-            # Get the perimeter of the contour
-            perimeter = cv.arcLength(contour, True)
-
-            # Approximate the contour shape
-            approx = cv.approxPolyDP(contour, 0.02 * perimeter, True)
-
-            # Check if the shape has 5 sides and sufficient area
-            if cv.contourArea(contour) > min_area and len(approx) == 5:
-                # Compare shapes and get the match value
-                match_value = cv.matchShapes(approx, self.reference_contour, cv.CONTOURS_MATCH_I2, 0)
-
-                # Update the minimum match value and store the corresponding contour
-                if match_value < min_match_value:
-                    min_match_value = match_value
-                    best_contour = approx
-        return best_contour
-
-    def calculate_upper_vector(self, frame, contours):
-        """
-        Calculate the orientation vectors of the best matching contour.
-        """
-        # Draw the best contour on the frame
-        # cv.drawContours(frame, [self.best_contour], -1, (0, 255, 0), 3)
-
-        # Calculate the center of the best contour
         M = cv.moments(self.best_contour)
         if M['m00'] == 0:
             M['m00'] = 1
         center_x = int(M['m10'] / M['m00'])
         center_y = int(M['m01'] / M['m00'])
         self.center = (center_x, center_y)
-        # cv.circle(frame, self.center, 5, (255, 0, 0), -1)
+        cv.circle(frame, self.center, 5, (255, 0, 0), -1)
+        return frame
+
+    def calculate_upper_vector(self, frame):
+        """
+        Calculate the orientation vectors of the best matching contour.
+        """
+        frame = self.calculate_moments_center(frame)
 
         # Extract corner points
         corners = [tuple(point[0]) for point in self.best_contour]
@@ -213,6 +210,10 @@ class FlagDetector:
         # Compute the minimum internal angle
         min_internal_angle_point = self.compute_min_angle(corners)
 
+        if min_internal_angle_point is None:
+            logging.warning("Could not compute minimum internal angle.")
+            return frame
+
         # Find lower center (self.point_LM)
         point_LL = corners_array[(min_internal_angle_point + 2) % 5]
         point_LR = corners_array[(min_internal_angle_point + 3) % 5]
@@ -223,21 +224,20 @@ class FlagDetector:
         self.vector_U = point_U - self.point_LM
         self.vector_R = point_LR - self.point_LM
 
-        # # Draw corner points and vectors
-        # for idx, corner in enumerate(corners):
-        #     corner_int = tuple(map(int, corner))
-        #     if idx == min_internal_angle_point:
-        #         # point_LM_int = tuple(map(int, self.point_LM))
-        #         # cv.circle(frame, corner_int, 5, (255, 0, 255), -1)
-        #         # cv.arrowedLine(frame, point_LM_int, corner_int, color=(255, 100, 0), thickness=3, tipLength=0.05)
-        #         pass
-        #     else:
-        #         cv.circle(frame, corner_int, 5, (255, 0, 0), -1)
-        #     cv.putText(frame, f"P{idx+1}", corner_int, cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+        # Draw corner points and vectors
+        for idx, corner in enumerate(corners):
+            corner_int = tuple(map(int, corner))
+            if idx == min_internal_angle_point:
+                point_LM_int = tuple(map(int, self.point_LM))
+                cv.circle(frame, corner_int, 5, (255, 0, 255), -1)
+                cv.arrowedLine(frame, point_LM_int, corner_int, color=(255, 100, 0), thickness=3, tipLength=0.05)
+            else:
+                cv.circle(frame, corner_int, 5, (255, 0, 0), -1)
+            cv.putText(frame, f"P{idx+1}", corner_int, cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
 
         return frame
 
-    def process_frame(self, frame):
+    def process_frame(self, frame, mode):
         """
         Process the frame to detect shapes and calculate orientation vectors.
         """
@@ -245,49 +245,160 @@ class FlagDetector:
         self.error = None
         self.aiming = None
         self.detected_num = None
-        self.is_within_safe_colume = None  # Reset the flag for each frame
+        self.is_within_safe_column = None  # Reset the flag for each frame
         self.best_contour = None
         self.pixels_per_meter = None
-        
+
+        frame_origin = frame.copy()
+        self.draw_safe_column(frame) #draw safe column every time frame input
         # Preprocess the frame
         edges = self.preprocess_frame(frame)
 
         # Find contours
         contours, _ = cv.findContours(edges, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-        self.best_contour = self.find_best_contour(contours)
 
+        if mode == 'biggest':
+            frame = self.find_biggest_contour(frame, contours)
+        elif mode == 'hu_moment':
+            frame = self.find_best_contour(frame, contours)
+        else:
+            logging.warning(f"Unknown mode '{mode}' selected.")
+            return frame
+        
         ##################- while detected flag ##################
         if self.best_contour is not None:
             self.is_flag = True
-            # Calculate orientation vectors
-            frame = self.calculate_upper_vector(frame, contours)
+
+            if mode == 'biggest':
+                self.corners = [tuple(point[0]) for point in self.best_contour]
+                self.detected_num = self.direct_ocr(frame_origin, self.corners)
+                # min_match_value = 1.0
+                # if len(self.best_contour) == 5 and cv.matchShapes(self.best_contour, self.reference_contour, cv.CONTOURS_MATCH_I2, 0) < min_match_value:
+                #     frame = self.process_flag(frame)
+                #     self.detected_num = self.extract_and_ocr(frame_origin, self.corners)
+            elif mode == 'hu_moment':
+                frame = self.process_flag(frame)
+                self.detected_num = self.extract_and_ocr(frame_origin, self.corners)
+
+
+        return frame  # Return the processed frame for visualization
+    
+    def process_flag(self, frame):
+            frame = self.calculate_upper_vector(frame)
+            self.aiming = self.calculate_aiming()
             # Calculate error value
             error_x, error_y = self.calculate_distance_to_frame_center()
-            self.error = (float(error_x), float(error_y))
+            if error_x is not None and error_y is not None:
+                self.error = (float(error_x), float(error_y))
+            else:
+                self.error = (None, None)
 
             if self.pixels_per_meter is not None and self.display_height is not None:
-                radius_pixels = self.safe_column_width_ratio/2 * self.display_height
+                radius_pixels = self.safe_column_width_ratio / 2 * self.display_height
                 radius_meters = radius_pixels / self.pixels_per_meter
-
-                error_distance = math.sqrt(error_x**2 + error_y**2)
+                error_distance = math.sqrt(error_x**2 + error_y**2) if error_x and error_y else None
                 # Set the boolean flag based on the error
-                self.is_within_safe_colume = error_distance < radius_meters
-                self.detected_num = self.extract_and_ocr(frame, self.corners)
-                # # Draw the safe column on the frame
-                # frame_center = (int(self.display_width / 2), int(self.display_height / 2))
-                # radius_pixels_int = int(radius_pixels)
-                # cv.circle(frame, frame_center, radius_pixels_int, (0, 255, 255), 2)  # Yellow circle
-                # cv.circle(frame, frame_center, 5, (0, 255, 255), -1)  # Center point
+                self.is_within_safe_column = error_distance < radius_meters if error_distance else False
             else:
-                print("Error: vector_R or display dimensions not set.")
-            self.aiming = self.calculate_aiming()
-        return frame  # Return the processed frame for visualization
+                logging.error("Error: vector_R or display dimensions not set.")
+
+    def find_biggest_contour(self, frame, contours):
+        """
+        Find the biggest contour and draw it on the frame.
+        """
+        min_area = 500  # Minimum area threshold
+        if len(contours) == 0:
+            logging.info("No contours found.")
+            return frame
+        else:
+            # Find the largest contour by area
+            biggest_contour = max(contours, key=cv.contourArea)
+            if cv.contourArea(biggest_contour) > min_area :
+                self.best_contour = biggest_contour
+                self.calculate_moments_center(frame)
+                # Get the perimeter of the contour
+                perimeter = cv.arcLength(self.best_contour, True)
+                # Approximate the contour shape
+                self.best_contour = cv.approxPolyDP(self.best_contour, 0.02 * perimeter, True)
+                # Draw the largest contour on the frame
+                cv.drawContours(frame, [self.best_contour], -1, (0, 255, 0), 3)
+            else:
+                logging.info("No matching contour found based biggest contour.")
+            return frame
+    
+    def extract_roi_bounding_box(self, image, corners):
+        """
+        Extracts the ROI from the image by cropping based on the bounding rectangle of the contour.
+
+        Args:
+            image (numpy.ndarray): Original BGR image.
+            corners (list or numpy.ndarray): List of corner points [(x1, y1), (x2, y2), ...].
+
+        Returns:
+            numpy.ndarray: Cropped image containing the ROI.
+        """
+        # Convert corners to a NumPy array
+        corners = np.array(corners, dtype=np.int32)
+
+        # Compute the bounding rectangle of the contour
+        x, y, w, h = cv.boundingRect(corners)
+
+        # Crop the image using the bounding rectangle
+        roi_cropped = image[y:y+h, x:x+w]
+
+        return roi_cropped
+    
+    def find_best_contour(self, frame, contours, expected_sides=5):
+        """
+        Find the contour that best matches the reference contour based on expected number of sides.
+        """
+        if len(contours) == 0:
+            logging.info("No contours found.")
+            return frame
+
+        min_match_value = 1.0
+        min_area = 500  # Minimum area threshold
+
+        best_contour = None  # Initialize best_contour
+
+        for contour in contours:
+            # Get the perimeter of the contour
+            perimeter = cv.arcLength(contour, True)
+
+            # Approximate the contour shape
+            approx = cv.approxPolyDP(contour, 0.02 * perimeter, True)
+
+            # Check if the shape has the expected number of sides and sufficient area
+            if cv.contourArea(contour) > min_area and len(approx) == expected_sides:
+                # Compare shapes and get the match value
+                match_value = cv.matchShapes(approx, self.reference_contour, cv.CONTOURS_MATCH_I2, 0)
+
+                # Update the minimum match value and store the corresponding contour
+                if match_value < min_match_value:
+                    min_match_value = match_value
+                    best_contour = approx
+
+        if best_contour is not None:
+            cv.drawContours(frame, [best_contour], -1, (0, 255, 0), 3)
+            self.best_contour = best_contour
+        else:
+            logging.info("No matching contour found based on Hu Moments.")
+
+        return frame
 
     def extract_and_ocr(self, frame, corners):
         """
         Extract the ROI from the frame, correct its perspective, and perform OCR to detect numbers.
         """
+        if not corners or len(corners) < 5:
+            logging.warning("Insufficient corners for OCR extraction.")
+            return None
+
         min_angle_idx = self.compute_min_angle(corners)
+        if min_angle_idx is None:
+            logging.warning("Could not compute minimum internal angle for OCR extraction.")
+            return None
+
         # Since points are ordered CW starting after min_angle_idx, define indices accordingly
         idx_right_upper = (min_angle_idx + 1) % 5
         idx_right_down = (min_angle_idx + 2) % 5
@@ -303,31 +414,72 @@ class FlagDetector:
         ], dtype='float32')
 
         # Define the destination points to map to a rectangle
-        width, height = 600, 200  # Adjust the size as needed
+        width, height = 200, 120  # Increased size for better OCR accuracy
         dst_pts = np.array([
-            [width - 1, 0],       # Top-right corner
-            [width - 1, height - 1],  # Bottom-right corner
-            [0, height - 1],      # Bottom-left corner
-            [0, 0]                # Top-left corner
+            [width - 1, 0],             # Top-right corner
+            [width - 1, height - 1],    # Bottom-right corner
+            [0, height - 1],            # Bottom-left corner
+            [0, 0]                       # Top-left corner
         ], dtype='float32')
 
         # Compute the perspective transformation matrix
-        M = cv.getPerspectiveTransform(src_pts, dst_pts)
+        try:
+            M = cv.getPerspectiveTransform(src_pts, dst_pts)
+        except cv.error as e:
+            logging.error(f"Perspective transformation failed: {e}")
+            return None
 
         # Apply the perspective transformation
         warped = cv.warpPerspective(frame, M, (width, height))
 
-        results = self.reader.readtext(warped, allowlist='0123456789')
-        # cv.imshow('warped', cv.resize(warped, (1280, 720)))
+        # Preprocess the warped image for better OCR results
+        warped_gray = cv.cvtColor(warped, cv.COLOR_BGR2GRAY)
+        warped_thresh = cv.threshold(warped_gray, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)[1]
+
+        results = self.reader.readtext(warped_thresh, allowlist='0123456789', detail=1)
+        cv.imshow('warped', cv.resize(warped, (200, 120)))
 
         if not results:
+            logging.info("No text detected in the warped image.")
             return None
         else:
             # Extract the number with the highest confidence score
             best_result = max(results, key=lambda x: x[2])  # x[2] is the confidence score
 
             # Return the number with the highest confidence
-            return best_result[1]  # x[1] is the detected text
+            detected_text = best_result[1].strip()
+            logging.info(f"OCR Detected Text: {detected_text} with confidence {best_result[2]:.2f}")
+            return detected_text
+    def rotate_image(self, image, angle):
+        image_center = tuple(np.array(image.shape[1::-1]) / 2)
+        rot_mat = cv.getRotationMatrix2D(image_center, angle, 1.0)
+        result = cv.warpAffine(image, rot_mat, image.shape[1::-1], flags=cv.INTER_LINEAR)
+        return result
+    def direct_ocr(self, frame, corners):
+
+        # rotate_angle = self.flag_heading - self.body_heading
+        rotate_angle = 180
+        # Apply the perspective transformation
+        cropped = self.extract_roi_bounding_box(frame, corners)
+        # Preprocess the warped image for better OCR results
+        cropped_gray = cv.cvtColor(cropped, cv.COLOR_BGR2GRAY)
+        cropped_thresh = cv.threshold(cropped_gray, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)[1]
+        cropped_rotate = self.rotate_image(cropped_thresh, rotate_angle)
+
+        cv.imshow('cropped_rotate', cropped_rotate)
+        cv.imshow('cropped', cropped)
+        results = self.reader.readtext(cropped_rotate, allowlist='0123456789', detail=1)
+        if not results:
+            logging.info("No text detected in the warped image.")
+            return None
+        else:
+            # Extract the number with the highest confidence score
+            best_result = max(results, key=lambda x: x[2])  # x[2] is the confidence score
+
+            # Return the number with the highest confidence
+            detected_text = best_result[1].strip()
+            logging.info(f"OCR Detected Text: {detected_text} with confidence {best_result[2]:.2f}")
+            return detected_text
 
 
     def calculate_distance_to_frame_center(self):
@@ -338,16 +490,16 @@ class FlagDetector:
             tuple: (error_x, error_y) in meters. Returns (None, None) if calculation cannot be performed.
         """
         if self.vector_R is None:
-            print("Error: vector_R is not set.")
+            logging.error("Error: vector_R is not set.")
             return (None, None)
         if self.center is None:
-            print("Error: center is not set.")
+            logging.error("Error: center is not set.")
             return (None, None)
 
         # Compute pixel length of vector_R
         length_pixels_R = np.linalg.norm(self.vector_R)
         if length_pixels_R == 0:
-            print("Error: vector_R has zero length.")
+            logging.error("Error: vector_R has zero length.")
             return (None, None)
 
         # Calculate pixels per meter (Scale Factor)
@@ -368,24 +520,24 @@ class FlagDetector:
         return (distance_meters_x, distance_meters_y)
     
     def calculate_aiming(self):
-            """
-            Calculate the angle between the positive X-axis and vector_U in radians.
-            
-            Returns:
-                float: Angle in radians if vector_U is defined.
-                None: If vector_U is not set or has zero length.
-            """
-            if self.vector_U is None:
-                print("Error: vector_U is not set.")
-                return None
+        """
+        Calculate the angle between the positive X-axis and vector_U in radians.
+        
+        Returns:
+            float: Angle in radians if vector_U is defined.
+            None: If vector_U is not set or has zero length.
+        """
+        if self.vector_U is None:
+            logging.error("Error: vector_U is not set.")
+            return None
 
-            # Ensure vector_U has non-zero length
-            norm = np.linalg.norm(self.vector_U)
-            if norm == 0:
-                print("Error: vector_U has zero length.")
-                return None
+        # Ensure vector_U has non-zero length
+        norm = np.linalg.norm(self.vector_U)
+        if norm == 0:
+            logging.error("Error: vector_U has zero length.")
+            return None
 
-            # Calculate the angle using arctan2
-            angle_rad = math.atan2(self.vector_U[1], self.vector_U[0])  # Y, X order
+        # Calculate the angle using arctan2
+        angle_rad = math.atan2(self.vector_U[1], self.vector_U[0])  # Y, X order
 
-            return angle_rad
+        return angle_rad
