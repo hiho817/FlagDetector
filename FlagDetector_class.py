@@ -9,6 +9,8 @@ import logging
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+logging.disable(logging.CRITICAL) #disable while debug
+
 class FlagDetector:
     def __init__(self, reference_path, hsv_ranges=None, safe_column_width_ratio=0.5):
         """
