@@ -16,7 +16,7 @@ if __name__ == "__main__":
 
     safe_colume_width_ratio = 0.5
 
-    mode = 'biggest'
+    mode = 'bearing'
 
     # Initialize the detector
     fd = FlagDetector(reference_path, custom_hsv_ranges, safe_column_width_ratio = 0.5)

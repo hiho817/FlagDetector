@@ -258,9 +258,9 @@ class FlagDetector:
         # Find contours
         contours, _ = cv.findContours(edges, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
 
-        if mode == 'biggest':
+        if mode == 'bearing':
             frame = self.find_biggest_contour(frame, contours)
-        elif mode == 'hu_moment':
+        elif mode == 'visual':
             frame = self.find_best_contour(frame, contours)
         else:
             logging.warning(f"Unknown mode '{mode}' selected.")
@@ -270,16 +270,16 @@ class FlagDetector:
         if self.best_contour is not None:
             self.is_flag = True
 
-            if mode == 'biggest':
+            if mode == 'bearing':
                 self.corners = [tuple(point[0]) for point in self.best_contour]
                 self.detected_num = self.direct_ocr(frame_origin, self.corners)
                 # min_match_value = 1.0
                 # if len(self.best_contour) == 5 and cv.matchShapes(self.best_contour, self.reference_contour, cv.CONTOURS_MATCH_I2, 0) < min_match_value:
                 #     frame = self.process_flag(frame)
                 #     self.detected_num = self.extract_and_ocr(frame_origin, self.corners)
-            elif mode == 'hu_moment':
+            elif mode == 'visual':
                 frame = self.process_flag(frame)
-                self.detected_num = self.extract_and_ocr(frame_origin, self.corners)
+                +self.detected_num = self.extract_and_ocr(frame_origin, self.corners)
 
 
         return frame  # Return the processed frame for visualization
