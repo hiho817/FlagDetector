@@ -465,6 +465,7 @@ class FlagDetector:
         cropped_gray = cv.cvtColor(cropped, cv.COLOR_BGR2GRAY)
         cropped_thresh = cv.threshold(cropped_gray, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)[1]
         cropped_rotate = self.rotate_image(cropped_thresh, rotate_angle)
+        cropped_rotate = cv.resize(cropped_rotate, (200, 120))
 
         cv.imshow('cropped_rotate', cropped_rotate)
         cv.imshow('cropped', cropped)

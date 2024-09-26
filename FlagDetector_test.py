@@ -16,6 +16,8 @@ if __name__ == "__main__":
 
     safe_colume_width_ratio = 0.5
 
+    mode = 'biggest'
+
     # Initialize the detector
     fd = FlagDetector(reference_path, custom_hsv_ranges, safe_column_width_ratio = 0.5)
     
@@ -37,7 +39,7 @@ if __name__ == "__main__":
 
         input_frame = frame.copy
         # Process the frame
-        frame = fd.process_frame(frame, "biggest")
+        frame = fd.process_frame(frame, mode)
         
         print(fd.is_flag)
 
