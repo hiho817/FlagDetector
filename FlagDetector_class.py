@@ -22,8 +22,7 @@ class FlagDetector:
         self.display_height = 720  # Will be set dynamically
         self.point_LM = None
         self.safe_column_width_ratio = safe_column_width_ratio
-        self.body_heading = None
-        self.flag_heading = None
+        self.compensate_angle = None
         # Define default HSV ranges for red if none are provided
         if hsv_ranges is None:
             self.hsv_ranges = [
@@ -451,20 +450,39 @@ class FlagDetector:
             logging.info(f"OCR Detected Text: {detected_text} with confidence {best_result[2]:.2f}")
             return detected_text
     def rotate_image(self, image, angle):
-        image_center = tuple(np.array(image.shape[1::-1]) / 2)
+        # Get the image dimensions (height, width)
+        (h, w) = image.shape[:2]
+        
+        # Calculate the center of the image
+        image_center = (w / 2, h / 2)
+        
+        # Get the rotation matrix for the given angle
         rot_mat = cv.getRotationMatrix2D(image_center, angle, 1.0)
-        result = cv.warpAffine(image, rot_mat, image.shape[1::-1], flags=cv.INTER_LINEAR)
-        return result
+        
+        # Compute the sine and cosine of the rotation angle
+        abs_cos = abs(rot_mat[0, 0])
+        abs_sin = abs(rot_mat[0, 1])
+        
+        # Compute the new width and height bounds
+        new_w = int(h * abs_sin + w * abs_cos)
+        new_h = int(h * abs_cos + w * abs_sin)
+        
+        # Adjust the rotation matrix to take into account the translation
+        rot_mat[0, 2] += (new_w / 2) - image_center[0]
+        rot_mat[1, 2] += (new_h / 2) - image_center[1]
+        
+        # Perform the rotation with the new bounds
+        rotated_image = cv.warpAffine(image, rot_mat, (new_w, new_h), flags=cv.INTER_LINEAR, borderMode=cv.BORDER_REPLICATE)
+        
+        return rotated_image
     def direct_ocr(self, frame, corners):
 
-        # rotate_angle = self.flag_heading - self.body_heading
-        rotate_angle = 180
         # Apply the perspective transformation
         cropped = self.extract_roi_bounding_box(frame, corners)
         # Preprocess the warped image for better OCR results
         cropped_gray = cv.cvtColor(cropped, cv.COLOR_BGR2GRAY)
         cropped_thresh = cv.threshold(cropped_gray, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)[1]
-        cropped_rotate = self.rotate_image(cropped_thresh, rotate_angle)
+        cropped_rotate = self.rotate_image(cropped_thresh, self.compensate_angle)
         cropped_rotate = cv.resize(cropped_rotate, (200, 120))
 
         cv.imshow('cropped_rotate', cropped_rotate)

@@ -34,8 +34,10 @@ if __name__ == "__main__":
             print("Failed to grab frame from webcam.")
             break
         
-        fd.body_heading = 0
-        fd.flag_heading = 90
+        body_heading = 0
+        flag_heading = 90
+
+        fd.compensate_angle = flag_heading - body_heading
 
         input_frame = frame.copy
         # Process the frame
