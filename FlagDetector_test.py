@@ -9,20 +9,20 @@ if __name__ == "__main__":
 
     # Define custom HSV ranges (example for red and blue)
     custom_hsv_ranges = [
-        {"lower": [0, 120, 70], "upper": [10, 255, 255]},    # Red range 1
-        {"lower": [170, 120, 70], "upper": [180, 255, 255]}, # Red range 2
-        {"lower": [100, 150, 0], "upper": [140, 255, 255]}   # Blue range
+        {"lower": [0, 80, 50], "upper": [10, 255, 255]},    # Red range 1
+        {"lower": [170, 80, 50], "upper": [180, 255, 255]}, # Red range 2
+        # {"lower": [100, 150, 0], "upper": [140, 255, 255]}   # Blue range
     ]
 
     safe_colume_width_ratio = 0.5
 
-    mode = 'bearing'
+    mode = 'visual'
 
     # Initialize the detector
     fd = FlagDetector(reference_path, custom_hsv_ranges, safe_column_width_ratio = 0.5)
     
     # Capture video from the webcam
-    cap = cv.VideoCapture(0)
+    cap = cv.VideoCapture(1)
 
     if not cap.isOpened():
         print("Error: Could not open webcam.")
@@ -33,7 +33,8 @@ if __name__ == "__main__":
         if not ret:
             print("Failed to grab frame from webcam.")
             break
-        
+
+        frame = cv.resize(frame, (960, 540))
         body_heading = 0
         flag_heading = 90
 
@@ -44,8 +45,6 @@ if __name__ == "__main__":
         frame = fd.process_frame(frame, mode)
         
         print(fd.is_flag)
-
-        # cv.imshow('Detected Shapes', cv.resize(frame, (fd.display_width, fd.display_height)))
         if cv.waitKey(1) & 0xFF == ord('q'):
             break
     # Release the capture and close all OpenCV windows
